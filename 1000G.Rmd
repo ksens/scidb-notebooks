@@ -1,0 +1,333 @@
+---
+title: "Exploring 1000 Genomes in SciDB"
+output:
+  html_document:
+    pandoc_args: ["+RTS", "-K16g", "-RTS"]
+---
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+# http://stackoverflow.com/questions/1716012/stopwatch-function-in-r/1716344#1716344
+tic <- function(gcFirst = TRUE, type=c("elapsed", "user.self", "sys.self"))
+{
+   type <- match.arg(type)
+   assign(".type", type, envir=baseenv())
+   if(gcFirst) gc(FALSE)
+   tic <- proc.time()[type]         
+   assign(".tic", tic, envir=baseenv())
+   invisible(tic)
+}
+
+toc <- function()
+{
+   type <- get(".type", envir=baseenv())
+   toc <- proc.time()[type]
+   tic <- get(".tic", envir=baseenv())
+   print(toc - tic)
+   invisible(toc)
+}
+```
+
+This workbook demonstrates using SciDB's R interface for interactive exploration of 1000 Genomes phase 3 genotype data. First, we connect to SciDB and obtain handles to the data arrays. For development/testing, we'll just look at chromosomes 21 and 22.
+
+```{r, warning=FALSE, error=FALSE, message=FALSE}
+require(ggplot2)
+require(scidb)
+scidbconnect()
+SAMPLE <- scidb("KG_SAMPLE")
+CHROMOSOME <- scidb("KG_CHROMOSOME")
+VARIANT <- merge(scidb("KG_VARIANT"), subset(CHROMOSOME, "chrom='21' or chrom='22'"))
+VARIANT <- scidbeval(VARIANT)
+GENOTYPE <- project(merge(scidb("KG_GENOTYPE_PARSED"),project(VARIANT,'chrom')),
+                    c("allele1","allele2","phased"))
+```
+
+The `VARIANT` array for chomosomes 21 and 22 has been computed and stored in SciDB's memory (but not the memory of our local R process) by the `scidbeval()` expression above. In contrast, the `GENOTYPE` array is merely a lazy expression, denoting but not materializing the subset of all the genotypes on chromosomes 21 and 22. Because `GENOTYPE` is our biggest array by far, we want to avoid copying any significant portion of it.
+
+Let's take a look at the schema.
+
+```{r}
+str(SAMPLE)
+count(SAMPLE)
+str(VARIANT)
+count(VARIANT)
+VARIANT[0:9,][]
+
+str(GENOTYPE)
+tic(); count(GENOTYPE); toc()
+GENOTYPE[0:9,0:9,][]
+```
+
+## Transition/transversion ratio
+
+The transition/transversion ratio (Ti/Tv) is a common quality metric for variant call sets. Let's compute Ti/Tv of all the variants with respect to the reference genome. This first calculation is on the variants only, not the individuals' genotypes, and thus involves only a modest amount of data.
+
+```{r}
+# count biallelic SNPs
+SNP <- subset(VARIANT, "(ref='A' or ref='G' or ref='C' or ref='T') and
+                        (alt='A' or alt='G' or alt='C' or alt='T')")
+snps <- count(SNP)
+snps
+
+# annotate each SNP as to whether it's a transition (or else transversion)
+transitions_filter_str <- "(ref='A' and alt='G') or (ref='G' and alt='A') or
+                           (ref='C' and alt='T') or (ref='T' and alt='C')"
+SNP <- bind(SNP,"is_transition",paste("bool(iif(", transitions_filter_str, ",TRUE,FALSE))"))
+SNP <- scidbeval(SNP)
+
+# count transitions
+tic()
+ti <- count(SNP$is_transition %==% TRUE)
+ti
+
+# count transversions
+tv <- count(SNP$is_transition %==% FALSE)
+tv
+
+# report Ti/Tv
+stopifnot(ti+tv == snps)
+ti/tv
+toc()
+```
+
+How about Ti/Tv of one individual's genotypes, with respect to the reference?
+
+```{r}
+tic()
+GENOTYPE_HG03209 <- merge(GENOTYPE,SAMPLE$sample_name %==% "HG03209")
+GENOTYPE_HG03209_TI <- merge(GENOTYPE_HG03209, SNP$is_transition %==% TRUE, "variant_id")
+ti_HG03209 <- aggregate(bind(GENOTYPE_HG03209_TI, "alt_copies", "uint8(allele1+allele2)"),
+                        FUN="sum(alt_copies)")[]
+ti_HG03209
+
+GENOTYPE_HG03209_TV <- merge(GENOTYPE_HG03209, SNP$is_transition %==% FALSE, "variant_id")
+tv_HG03209 <- aggregate(bind(GENOTYPE_HG03209_TV, "alt_copies", "uint8(allele1+allele2)"),
+                        FUN="sum(alt_copies)")[]
+tv_HG03209
+
+ti_HG03209/tv_HG03209
+toc()
+```
+
+And finally, let's look at the distribution of Ti/Tv across the individuals in the population.
+
+```{r}
+tic()
+GENOTYPE_TI <- merge(GENOTYPE, SNP$is_transition %==% TRUE, "variant_id")
+TI_BY_SAMPLE <- aggregate(bind(GENOTYPE_TI, "alt_copies", "uint8(allele1+allele2)"),
+                          "sample_id","sum(alt_copies)")
+
+GENOTYPE_TV <- merge(GENOTYPE, SNP$is_transition %==% FALSE, "variant_id")
+TV_BY_SAMPLE <- aggregate(bind(GENOTYPE_TV, "alt_copies", "uint8(allele1+allele2)"),
+                          "sample_id","sum(alt_copies)")
+
+TITV_BY_SAMPLE <- project(bind(TI_BY_SAMPLE,'ti_d','double(alt_copies_sum)'),'ti_d')/TV_BY_SAMPLE
+TITV_BY_SAMPLE <- scidbeval(TITV_BY_SAMPLE)
+toc()
+invisible(hist(TITV_BY_SAMPLE[1:count(SAMPLE)-1], xlab="Ti/Tv", ylab="# individuals", main=""))
+```
+
+All the data traversal is performed by SciDB in parallel; then the histogram buckets and counts are imported into R memory for plotting. Note how lazily-evaluated subexpressions can be stored, composed, and reused as R variables. This is often a lot nicer than formulating SQL.
+
+On the other hand, small arrays can easily be moved back and forth between SciDB and R:
+
+```{r}
+TITV_BY_SAMPLE[0:9]        # still merely a reference
+TITV_BY_SAMPLE[0:9][]      # materialized in R's memory
+quantile(TITV_BY_SAMPLE)[] # computed by SciDB in parallel
+quantile(TITV_BY_SAMPLE[], na.rm=TRUE) # computed by R
+
+# upload R vector and compute in SciDB
+quantile(as.scidb(runif(100)))[] 
+```
+
+One pitfall: SciDB arrays are zero-based, while R uses one-based indexing. But as genome scientists, we're right at home dealing with this ;-)
+
+## Principal component analysis
+
+Now let's find principal components of the genotype data and project the individual genomes onto them, revealing the underlying population structure. Begin by selecting common SNPs, because rare variants by definition don't contribute much to the overall variance.
+
+```{r}
+SNP_COMMON <- subset(merge(SNP,scidb("KG_VARIANT_MULT_VAL")),
+                     sprintf("af>= %f and af <=%f ", 0.1, 0.9))
+SNP_COMMON <- redimension(SNP_COMMON, sprintf("<signature:string> [variant_id=0:%i,10000,0]",
+                                              nrow(SNP_COMMON)-1))
+SNP_COMOMN <- scidbeval(SNP_COMMON)
+count(SNP_COMMON)
+```
+
+The redimension operation just removes some extraneous attributes and dimensions.
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+# downsampling for test/dev:
+# SNP_COMMON <- scidbeval(bernoulli(SNP_COMMON, 0.1, 42))
+# count(SNP_COMMON)
+```
+
+Now construct a matrix `G` where `G[i,j]` is the number of copies of the alt allele found in sample `i`, common SNP `j`. The samples are observations, and the SNPs are variables. Reference: doi:10.1371/journal.pgen.0020190
+
+```{r}
+tic()
+# construct a dense matrix of genotypes from the selected sites
+G <- index_lookup(merge(GENOTYPE,SNP_COMMON), unique(SNP_COMMON), "signature", "dense_variant_id")
+# map genotypes to alt allele counts
+G <- bind(G, "alt_count", "double(allele1+allele2)")
+# transpose, so that samples are on the rows and sites on the columns, and trim dimensions:
+G <- redimension(G, sprintf("<alt_count:double NULL> [sample_id=0:%i,313,0, dense_variant_id=0:%i,1000,0]",
+                            count(SAMPLE)-1, count(SNP_COMMON)-1))
+G <- scidbeval(G)
+toc()
+dim(G)
+G[0:9,0:9][]
+```
+
+Center each variable and compute the sample covariance matrix ("economy-sized", since we have many more variables than observations):
+
+```{r}
+tic()
+G0 <- sweep(G, 2, apply(G, 2, mean))
+SCV <- scidbeval(tcrossprod(G0)/(ncol(G0)-1))
+toc()
+invisible(image(SCV))
+```
+
+Perform SVD on the covariance matrix, and plot the projection of the observations onto the first few principal components:
+
+```{r}
+tic()
+SCVsvd <- svd(SCV)   
+H <- SCVsvd$u[,0:2][] %*% diag(SCVsvd$d[0:2][])
+toc()
+qplot(H[,1], H[,2], xlab="PC1", ylab="PC2")
+qplot(H[,1], H[,3], xlab="PC1", ylab="PC3")
+```
+
+For the avoidance of doubt: the heavy-duty matrix calculations were performed by SciDB, not in the local R process.
+
+## Linkage disequilibrium
+
+Linkage disequilibrum (LD) describes the correlation among the alleles observed at nearby sites. It reflects the inheritance of haplotypes on short timescales compared to the rate of genetic recombination. Let's look at LD among common SNPs in a region on the order of 100kbp.
+
+```{r}
+LDchrom <- "21"
+LDlo <- 35809243
+LDhi <- 36065894
+LD_SNP <- subset(SNP, sprintf("chrom = '%s' and pos >= %i and pos < %i",
+                              LDchrom, LDlo, LDhi))
+LD_SNP <- subset(merge(LD_SNP, scidb("KG_VARIANT_MULT_VAL")),
+                 sprintf("af>= %f and af <=%f ", 0.1, 0.9))
+LD_SNP <- redimension(LD_SNP, sprintf("<signature:string> [variant_id=0:%i,10000,0]",
+                                      nrow(LD_SNP)-1))
+LD_SNP <- scidbeval(LD_SNP)
+count(LD_SNP)
+```
+
+Formulate L where L[i,j] is the alt allele count in sample i at site j.
+
+```{r}
+L <- bind(merge(GENOTYPE, LD_SNP, "variant_id"), "alt_count", "double(allele1+allele2)")
+# sparse to dense:
+L <- index_lookup(L, unique(LD_SNP$signature), "signature", "dense_variant_id")
+# transpose and trim dimensions:
+L <- redimension(L, sprintf("<alt_count:double NULL> [sample_id=0:%i,313,0, dense_variant_id=0:%i,100,0]",
+                            count(SAMPLE)-1, count(LD_SNP)-1))
+L <- scidbeval(L)
+```
+
+Compute the correlation matrix for the sites, providing estimates of the linkage disequilibrium (r) for each pair of SNPs. Reference: doi:10.1534/genetics.108.093153
+
+```{r}
+tic()
+# reference: https://github.com/Paradigm4/SciDBR/wiki/Correlation-matrix-example
+L0 <- sweep(L, 2, apply(L, 2, mean), eval=TRUE)
+Lcov <- crossprod(L0)/(nrow(L0) - 1)
+Ls  <- diag(Lcov)^(-1/2)
+Lcor <- scidbeval(Ls * Lcov * Ls)
+Lcor.abs <- scidbeval(abs(Lcor))
+toc()
+invisible(image(Lcor.abs,main=sprintf("LD (r) among common SNPs in %s:%d-%d",
+                                      LDchrom, LDlo, LDhi)))
+```
+
+We see several distinct haplotype blocks in this region. Unusually long haplotype blocks - which these are not necessarily - frequently indicate interesting population history, such as selective sweeps, bottlenecks, or founder effects.
+
+## Hardy-Weinberg equilibrium
+
+Hardy-Weinberg equilibrium (HWE) describes the diploid genotype frequencies expected as a function of the allele frequencies at a site, under various idealistic assumptions. Let's count the genotypes observed across the population at each SNP:
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+#tic()
+# unbelievably slow:
+#GT_CTS <- aggregate(merge(GENOTYPE, SNP, "variant_id"), by=list("variant_id", "allele1", "allele2"), FUN="count(*)")
+#GT_CTS <- scidbeval(GT_CTS)
+#toc()
+```
+
+```{r}
+tic()
+GENOTYPE_SNP <- project(merge(GENOTYPE, SNP, "variant_id"), c("allele1","allele2"))
+GT_HOM0_BY_SNP <- aggregate(subset(GENOTYPE_SNP, "allele1=0 and allele2=0"),
+                            by="variant_id", FUN="count(*)", eval=TRUE)
+GT_HOM1_BY_SNP <- aggregate(subset(GENOTYPE_SNP, "allele1=1 and allele2=1"),
+                            by="variant_id", FUN="count(*)", eval=TRUE)
+GT_HET_BY_SNP <- aggregate(subset(GENOTYPE_SNP, "(allele1=1 and allele2=0) or
+                                                 (allele1=0 and allele2=1)"),
+                           by="variant_id", FUN="count(*)", eval=TRUE)
+toc()
+
+# merge (cbind) these three vectors. Use all=TRUE since they're sparse; otherwise,
+# we'd lose rows where any of the three entries is empty.
+GT_BY_SNP <- merge(attribute_rename(GT_HOM0_BY_SNP, "count", "AA"),
+             merge(attribute_rename(GT_HET_BY_SNP, "count", "Aa"),
+                   attribute_rename(GT_HOM1_BY_SNP, "count", "aa"),
+                   all=TRUE), all=TRUE)
+stopifnot(count(GT_BY_SNP) == count(SNP))
+GT_BY_SNP[0:9,][]
+GT_BY_SNP <- replaceNA(GT_BY_SNP)
+GT_BY_SNP[0:9,][]
+```
+
+Add the allele frequencies:
+
+```{r}
+HW_BY_SNP <- bind(GT_BY_SNP, "N", "AA + Aa + aa")
+HW_BY_SNP <- bind(HW_BY_SNP, "p", "double(2*AA + Aa)/(2*N)")
+HW_BY_SNP <- bind(HW_BY_SNP, "q", "double(2*aa + Aa)/(2*N)")
+HW_BY_SNP <- scidbeval(HW_BY_SNP)
+HW_BY_SNP[0:9,][]
+```
+
+Compute the expected genotype counts under HWE, and the chi^2 statistics for deviation from equilibrium.
+
+```{r}
+HW_BY_SNP <- bind(HW_BY_SNP, "E_AA", "N*p*p")
+HW_BY_SNP <- bind(HW_BY_SNP, "E_Aa", "2*N*p*q")
+HW_BY_SNP <- bind(HW_BY_SNP, "E_aa", "N*q*q")
+HW_BY_SNP <- bind(HW_BY_SNP, "chi_2", "pow(AA-E_AA,2)/E_AA +
+                                       pow(Aa-E_Aa,2)/E_Aa +
+                                       pow(aa-E_aa,2)/E_aa")
+HW_BY_SNP <- scidbeval(HW_BY_SNP)
+HW_BY_SNP[0:9,][]
+
+# plot a sample of Aa vs. E_Aa
+HW_BY_SNP_SAMPLE <- unpack(bernoulli(HW_BY_SNP, 0.005))
+HW_BY_SNP_SAMPLE <- HW_BY_SNP_SAMPLE[1:count(HW_BY_SNP_SAMPLE)-1,] # trims dimension
+qplot(as(HW_BY_SNP_SAMPLE$E_Aa[],"vector"), as(HW_BY_SNP_SAMPLE$Aa[],"vector"),
+      xlab="E_Aa", ylab="Aa")
+
+# proportion of sites with chi_2 > 3.841; random expectation would be 0.05.
+count(HW_BY_SNP$chi_2 %>% 3.841)/count(HW_BY_SNP$chi_2)
+```
+
+Have a look at the most out-of-equilibrium common SNPs:
+
+```{r}
+sort(merge(project(SNP_COMMON,"signature"), HW_BY_SNP)
+     decreasing=TRUE, attributes="chi_2")[0:9,][]
+```
+
+Close examination of these sites would probably reveal regions prone to ambiguous NGS read mapping, or some other technical artifacts. Occasionally, after careful follow-up analysis, we might find sites out of equilibrium for interesting reasons, such as recent selective sweeps or heterozygote advantage.
+
+Ideas:
+- bring in population labels to demo 'slicing'
+- LD and HWE in one plot
+- r^2
