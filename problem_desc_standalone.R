@@ -19,7 +19,8 @@ m = scidbeval(m)
 
 m1 <- bind(m,"one",1)
 
-# fails with a syntax error
+# fails with a syntax error; works after updating the scidb-R client
+# from github
 A <- redimension(m1,
                  dim=c("vid","x","y"),
                  FUN="sum(one) as sum")
