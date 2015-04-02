@@ -49,12 +49,19 @@ def account_rec_native(rec):
     else:
         tv += 1
 
+def print_totals(i):
+    ratio = float(ti) / float(tv)
+    print("num records={}  ti={}  tv={}  ti/tv={}".format(i, ti, tv, ratio))
+
+# parse command line
+i = 0
 with open(filename, 'r') as f:
     vcf_reader = vcf.Reader(f)
-    #for i in range(0,10000):
     while True:
+        i = i + 1
+        if i % 1000 == 0:
+            print_totals(i)
         rec = vcf_reader.next()
-        #account_rec(rec)
         account_rec_native(rec)
 
-print("ti={}  tv={}".format(ti, tv))
+print_totals(i)
