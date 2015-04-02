@@ -1,7 +1,5 @@
 import vcf
-import pprint
-
-filename = "data/ALL.chr21.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf.gz"
+import argparse
 
 ti = 0
 tv = 0
@@ -39,7 +37,8 @@ def account_rec(rec):
         tv += 1
 
 # This version uses PyVCF functions.
-# There are slight differences, nothing major.
+# There are slight calling differences between the DIY version and
+# this one.
 def account_rec_native(rec):
     global ti, tv
     if not rec.is_snp:
@@ -54,8 +53,14 @@ def print_totals(i):
     print("num records={}  ti={}  tv={}  ti/tv={}".format(i, ti, tv, ratio))
 
 # parse command line
+parser = argparse.ArgumentParser(description='Count ti/tv on a VCF file')
+parser.add_argument('--file', dest="filename", help='VCF file name')
+args = parser.parse_args()
+print("VCF file={}".format(args.filename))
+
+# Process all records in the file
 i = 0
-with open(filename, 'r') as f:
+with open(args.filename, 'r') as f:
     vcf_reader = vcf.Reader(f)
     while True:
         i = i + 1
