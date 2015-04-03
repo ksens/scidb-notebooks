@@ -1,40 +1,12 @@
+#!/usr/bin/python
+
 import vcf
 import argparse
+import sys
 
 ti = 0
 tv = 0
-
-def is_transition(ref, alt):
-    if ((ref == 'A' and alt == 'G') or
-        (ref == 'G' and alt == 'A') or
-        (ref == 'C' and alt == 'T') or
-        (ref == 'T' and alt == 'C')):
-        return True
-    else:
-        return False
-
-def account_rec(rec):
-    global ti, tv
-    ref = rec.REF
-    alt = rec.ALT
-    if (ref is None or
-        alt is None):
-        return
-    if not type(alt) is list:
-        return
-    if len(alt) != 1:
-        return
-    alt = alt[0]
-    if not type(alt) is vcf.model._Substitution:
-        return
-    if (len(ref) != 1 or len(alt) != 1):
-        return
-
-    # we now have a biallelic SNP
-    if is_transition(ref, alt):
-        ti += 1
-    else:
-        tv += 1
+num_records = 0
 
 # This version uses PyVCF functions.
 # There are slight calling differences between the DIY version and
@@ -50,23 +22,44 @@ def account_rec_native(rec):
 
 def print_totals(i):
     ratio = float(ti) / float(tv)
-    print("num records={}  ti={}  tv={}  ti/tv={}".format(i, ti, tv, ratio))
+    if i is not None:
+        print("num records={}  tot={} ti={}  tv={}  ti/tv={}".format(i, num_records, ti, tv, ratio))
+    else:
+        print("tot={} ti={}  tv={}  ti/tv={}".format(num_records, ti, tv, ratio))
+    sys.stdout.flush()
+
+# Process all records in the file
+def process_file(fname, nlimit):
+    global num_records
+    print("Processing VCF file {}".format(fname))
+    with open(fname, 'r') as f:
+        vcf_reader = vcf.Reader(f)
+        i = 0
+        while True:
+            num_records += 1
+            i = i + 1
+            if i % 1000 == 0:
+                print_totals(i)
+            if (nlimit is not None and
+                i >= nlimit):
+                break
+            rec = vcf_reader.next()
+            account_rec_native(rec)
 
 # parse command line
 parser = argparse.ArgumentParser(description='Count ti/tv on a VCF file')
-parser.add_argument('--file', dest="filename", help='VCF file name')
+parser.add_argument('--file', dest="filenames", action='append',
+                    help='VCF file name')
+parser.add_argument('--nlimit', type=int,
+                    help='how many records to process per file')
 args = parser.parse_args()
-print("VCF file={}".format(args.filename))
+if (args.filenames is None or
+    len(args.filenames) == 0):
+    print("must specify VCF file")
+    exit(1)
 
-# Process all records in the file
-i = 0
-with open(args.filename, 'r') as f:
-    vcf_reader = vcf.Reader(f)
-    while True:
-        i = i + 1
-        if i % 1000 == 0:
-            print_totals(i)
-        rec = vcf_reader.next()
-        account_rec_native(rec)
+# process all files
+for fname in args.filenames:
+    process_file(fname, args.nlimit)
 
-print_totals(i)
+print_totals(None)
