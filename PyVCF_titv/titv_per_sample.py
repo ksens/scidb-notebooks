@@ -13,7 +13,7 @@ import numpy
 ti = 0
 tv = 0
 num_variants = 0
-DBG_INTERVAL = 5000
+DBG_INTERVAL = 1000
 start_time = time.time()
 
 # Count the number of transversions and inversions per person.
@@ -23,21 +23,13 @@ Person = collections.namedtuple('person', ['ti', 'tv'])
 #   string -> <ti:int, tv:int>
 people = {}
 
-# Convert strings like  0|0, 0|1, 1|0, 1|1 to allele counts
-def calc_num_alleles(gt):
-    if gt is None or len(gt) != 3:
-        return 0
-    allele1 = int(gt[0])
-    allele2 = int(gt[2])
-    if allele1 > 2 or allele2 > 2 or allele1 < 0 or allele2 < 0:
-        print("strange value found {}".format(gt))
-        exit(1)
-        #allele1 = min(1, allele1)
-        #allele2 = min(1, allele2)
-    result = allele1 + allele2
-    # if result > 0:
-    #    print(gt, allele1, allele2)
-    return result
+def transform_gt_allele(allele):
+    return (int(allele) if allele != '.' else 0)
+
+def calc_num_alleles(call):
+    allele1 = transform_gt_allele(call.gt_alleles[0])
+    allele2 = transform_gt_allele(call.gt_alleles[1])
+    return allele1 + allele2
 
 def is_transition(ref, alt):
     return ((ref == 'A' and alt == 'G') or
@@ -46,18 +38,19 @@ def is_transition(ref, alt):
             (ref == 'T' and alt == 'C'))
 
 def iter_samples(rec, is_trans):
-    for s in rec.samples:
-        nal = calc_num_alleles(s['GT'])
+    for call in rec.samples:
+        name = call.sample
+        nal = calc_num_alleles(call)
         if nal == 0:
             continue
-        p = people.get(s.sample)
+        p = people.get(name)
         if p is None:
             p = Person(0, 0)
         if is_trans:
             p_new = Person(p.ti + nal, p.tv)
         else:
             p_new = Person(p.ti, p.tv + nal)
-        people[s.sample] = p_new
+        people[name] = p_new
 
 def account_rec(rec):
     global ti, tv
