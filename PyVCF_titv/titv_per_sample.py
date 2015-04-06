@@ -1,4 +1,4 @@
-a#!/usr/bin/python
+#!/usr/bin/python
 
 # Calculate the ti/tv ratio per person (sample)
 #
@@ -6,6 +6,7 @@ import vcf
 import argparse
 import sys
 import collections
+import numpy
 
 # global variables
 ti = 0
@@ -23,19 +24,23 @@ people = {}
 def calc_num_alleles(gt):
     if gt is None or len(gt) != 3:
         return 0
-    allele1 = 0
-    allele2 = 0
-    if gt[0] == '1':
-        allele1 = 1
-    if gt[2] == '1':
-        allele2 = 1
-    return allele1 + allele2
+    allele1 = int(gt[0])
+    allele2 = int(gt[2])
+    if allele1 > 1 or allele2 > 1:
+        # print("strange value found {}".format(gt))
+        # return 0
+        allele1 = min(1, allele1)
+        allele2 = min(1, allele2)
+    result = allele1 + allele2
+    # if result > 0:
+    #    print(gt, allele1, allele2)
+    return result
 
 # This version uses PyVCF functions.
 # There are slight calling differences between the DIY version and
 # this one.
 def account_rec_native(rec):
-    global ti, tv
+    global ti, tv, people
     if not rec.is_snp:
         return
     if rec.is_transition:
@@ -44,27 +49,34 @@ def account_rec_native(rec):
         tv += 1
     for s in rec.samples:
         nal = calc_num_alleles(s['GT'])
+        if nal == 0:
+            continue
         p = people.get(s.sample)
         if p is None:
             p = Person(0, 0)
         if rec.is_transition:
-            p_new = Person(p.ti + 1, p.tv)
+            p_new = Person(p.ti + nal, p.tv)
         else:
-            p_new = Person(p.tv, p.tv + 1)
+            p_new = Person(p.ti, p.tv + nal)
         people[s.sample] = p_new
 
 def summarize_people_titv():
-    ti_tv_array = []
-    for p in people:
+    global people
+    ti_tv_ratios = []
+    for _, p in people.iteritems():
         ratio = float(p.ti) / float(p.tv)
-        ti_tv_array.append(ratio)
+        ti_tv_ratios.append(ratio)
+    h = numpy.histogram(ti_tv_ratios)
+    print(h)
 
 def print_totals(i):
+    global ti, tv
     ratio = float(ti) / float(tv)
     if i is not None:
         print("num records={}  tot={} ti={}  tv={}  ti/tv={}".format(i, num_variants, ti, tv, ratio))
     else:
         print("tot={} ti={}  tv={}  ti/tv={}".format(num_variants, ti, tv, ratio))
+    summarize_people_titv()
     sys.stdout.flush()
 
 # Process all records in the file
@@ -103,6 +115,5 @@ for fname in args.filenames:
 
 # print results
 print_totals(None)
-summarize_people_titv()
 
 
