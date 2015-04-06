@@ -13,7 +13,8 @@ import numpy
 ti = 0
 tv = 0
 num_variants = 0
-DBG_INTERVAL = 1000
+DBG_INTERVAL = 5000
+start_time = time.time()
 
 # Count the number of transversions and inversions per person.
 Person = collections.namedtuple('person', ['ti', 'tv'])
@@ -107,13 +108,17 @@ def summarize_people_titv():
     print(h)
 
 def print_totals(i):
-    global ti, tv
+    global ti, tv, start_time
     ratio = float(ti) / float(tv)
     if i is not None:
         print("num records={}  tot={} ti={}  tv={}  ti/tv={}".format(i, num_variants, ti, tv, ratio))
     else:
         print("tot={} ti={}  tv={}  ti/tv={}".format(num_variants, ti, tv, ratio))
     summarize_people_titv()
+
+    crnt_time = time.time()
+    diff = crnt_time - start_time
+    print("--- {} seconds ---".format(diff))
     sys.stdout.flush()
 
 # Process all records in the file
@@ -147,15 +152,9 @@ if (args.filenames is None or
     print("must specify at least one VCF file")
     exit(1)
 
-start_time = time.time()
-
 # process all files
 for fname in args.filenames:
     process_file(fname, args.nlimit)
-
-end_time = time.time()
-diff = end_time - start_time
-print("--- {} seconds ---".format(diff))
 
 # print results
 print_totals(None)
