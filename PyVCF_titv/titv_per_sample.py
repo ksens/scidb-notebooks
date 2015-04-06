@@ -26,15 +26,60 @@ def calc_num_alleles(gt):
         return 0
     allele1 = int(gt[0])
     allele2 = int(gt[2])
-    if allele1 > 1 or allele2 > 1:
-        # print("strange value found {}".format(gt))
-        # return 0
-        allele1 = min(1, allele1)
-        allele2 = min(1, allele2)
+    if allele1 > 2 or allele2 > 2 or allele1 < 0 or allele2 < 0:
+        print("strange value found {}".format(gt))
+        exit(1)
+        #allele1 = min(1, allele1)
+        #allele2 = min(1, allele2)
     result = allele1 + allele2
     # if result > 0:
     #    print(gt, allele1, allele2)
     return result
+
+def is_transition(ref, alt):
+    return ((ref == 'A' and alt == 'G') or
+            (ref == 'G' and alt == 'A') or
+            (ref == 'C' and alt == 'T') or
+            (ref == 'T' and alt == 'C'))
+
+def iter_samples(rec, is_trans):
+    for s in rec.samples:
+        nal = calc_num_alleles(s['GT'])
+        if nal == 0:
+            continue
+        p = people.get(s.sample)
+        if p is None:
+            p = Person(0, 0)
+        if is_trans:
+            p_new = Person(p.ti + nal, p.tv)
+        else:
+            p_new = Person(p.ti, p.tv + nal)
+        people[s.sample] = p_new
+
+def account_rec(rec):
+    global ti, tv
+    ref = rec.REF
+    alt = rec.ALT
+    if (ref is None or
+        alt is None):
+        return
+    if not type(alt) is list:
+        return
+    if len(alt) != 1:
+        return
+    alt = alt[0]
+    if not type(alt) is vcf.model._Substitution:
+        return
+    if (len(ref) != 1 or len(alt) != 1):
+        return
+
+    # we now have a biallelic SNP
+    if is_transition(ref, alt):
+        ti += 1
+        iter_samples(rec, True)
+    else:
+        tv += 1
+        iter_samples(rec, False)
 
 # This version uses PyVCF functions.
 # There are slight calling differences between the DIY version and
@@ -44,21 +89,11 @@ def account_rec_native(rec):
     if not rec.is_snp:
         return
     if rec.is_transition:
+        iter_samples(rec, True)
         ti += 1
     else:
+        iter_samples(rec, False)
         tv += 1
-    for s in rec.samples:
-        nal = calc_num_alleles(s['GT'])
-        if nal == 0:
-            continue
-        p = people.get(s.sample)
-        if p is None:
-            p = Person(0, 0)
-        if rec.is_transition:
-            p_new = Person(p.ti + nal, p.tv)
-        else:
-            p_new = Person(p.ti, p.tv + nal)
-        people[s.sample] = p_new
 
 def summarize_people_titv():
     global people
@@ -95,7 +130,8 @@ def process_file(fname, nlimit):
                 i >= nlimit):
                 break
             rec = vcf_reader.next()
-            account_rec_native(rec)
+            #account_rec_native(rec)
+            account_rec(rec)
 
 # parse command line
 parser = argparse.ArgumentParser(description='Count ti/tv on a VCF file')
