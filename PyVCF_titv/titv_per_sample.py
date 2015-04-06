@@ -2,6 +2,7 @@
 
 # Calculate the ti/tv ratio per person (sample)
 #
+import time
 import vcf
 import argparse
 import sys
@@ -12,6 +13,7 @@ import numpy
 ti = 0
 tv = 0
 num_variants = 0
+DBG_INTERVAL = 1000
 
 # Count the number of transversions and inversions per person.
 Person = collections.namedtuple('person', ['ti', 'tv'])
@@ -124,7 +126,7 @@ def process_file(fname, nlimit):
         while True:
             num_variants += 1
             i = i + 1
-            if i % 1000 == 0:
+            if i % DBG_INTERVAL == 0:
                 print_totals(i)
             if (nlimit is not None and
                 i >= nlimit):
@@ -145,9 +147,15 @@ if (args.filenames is None or
     print("must specify at least one VCF file")
     exit(1)
 
+start_time = time.time()
+
 # process all files
 for fname in args.filenames:
     process_file(fname, args.nlimit)
+
+end_time = time.time()
+diff = end_time - start_time
+print("--- {} seconds ---".format(diff))
 
 # print results
 print_totals(None)
