@@ -118,20 +118,23 @@ def print_totals(i):
 def process_file(fname, nlimit):
     global num_variants
     print("Processing VCF file {}".format(fname))
-    with open(fname, 'r') as f:
-        vcf_reader = vcf.Reader(f)
-        i = 0
-        while True:
-            num_variants += 1
-            i = i + 1
-            if i % DBG_INTERVAL == 0:
-                print_totals(i)
-            if (nlimit is not None and
-                i >= nlimit):
-                break
-            rec = vcf_reader.next()
-            #account_rec_native(rec)
-            account_rec(rec)
+    try:
+        with open(fname, 'r') as f:
+            vcf_reader = vcf.Reader(f)
+            i = 0
+            while True:
+                num_variants += 1
+                i = i + 1
+                if i % DBG_INTERVAL == 0:
+                    print_totals(i)
+                if (nlimit is not None and
+                    i >= nlimit):
+                    break
+                rec = vcf_reader.next()
+                #account_rec_native(rec)
+                account_rec(rec)
+    except StopIteration:
+        pass
 
 # parse command line
 parser = argparse.ArgumentParser(description='Count ti/tv on a VCF file')
