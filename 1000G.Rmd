@@ -132,7 +132,7 @@ SNP_COMMON <- subset(merge(SNP,scidb("KG_VARIANT_MULT_VAL")),
                      sprintf("af>= %f and af <=%f ", 0.1, 0.9))
 SNP_COMMON <- redimension(SNP_COMMON, sprintf("<signature:string, af:double NULL> [variant_id=0:%i,10000,0]",
                                               nrow(SNP_COMMON)-1))
-SNP_COMOMN <- scidbeval(SNP_COMMON)
+SNP_COMMON <- scidbeval(SNP_COMMON)
 count(SNP_COMMON)
 ```
 
