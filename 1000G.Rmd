@@ -147,41 +147,43 @@ The redimension operation just removes some unneeded attributes and dimensions.
 Now construct a matrix `G` where `G[i,j]` is the number of copies of the alt allele found in sample `i`, common SNP `j`. The samples are observations, and the SNPs are variables. Reference: doi:10.1371/journal.pgen.0020190
 
 ```{r}
-# construct a dense matrix of genotypes from the selected sites
-G <- index_lookup(merge(GENOTYPE,SNP_COMMON), unique(SNP_COMMON), "signature", "dense_variant_id")
-# map genotypes to alt allele counts
-G <- bind(G, "alt_count", "double(allele1+allele2)")
-# transpose, so that samples are on the rows and sites on the columns, and trim dimensions:
-G <- redimension(G, sprintf("<alt_count:double NULL> [sample_id=0:%i,313,0, dense_variant_id=0:%i,1000,0]",
-                            count(SAMPLE)-1, count(SNP_COMMON)-1))
-G <- scidbeval(G)
-dim(G)
-head(G)
+# construct a dense matrix of alt allele counts from the selected sites
+Gdensifier <- dimension_rename(unpack(SNP_COMMON),"i","dense_variant_id") 
+Gdensifier <- redimension(Gdensifier, sprintf("<dense_variant_id:int64> %s", 
+                                              scidb:::build_dim_schema(VARIANT))) 
+
+G <- bind(GENOTYPE, "alt_count", "double(allele1+allele2)") 
+G <- redimension(merge(G, Gdensifier), 
+                 sprintf("<alt_count:double NULL> [sample_id = 0:%i,1000,0, dense_variant_id=0:%i,1000,0]", 
+                         count(SAMPLE)-1, count(SNP_COMMON)-1)) 
+G <- scidbeval(G, temp=TRUE) 
+dim(G) 
+head(G) 
 ```
 
 Normalize each variable and compute the sample covariance matrix ("economy-sized", since we have many more variables than observations):
 
 ```{r}
 # Normalization factor for the variance of each site - proportional to sqrt(p*(1-p))
-Gnormalizer <- index_lookup(SNP_COMMON, unique(SNP_COMMON), "signature", "dense_variant_id")
-Gnormalizer <- replaceNA(bind(Gnormalizer, "u", "pow((1-af)*af,0.5)"))
-Gnormalizer <- redimension(Gnormalizer, sprintf("<u:double> [dense_variant_id=0:%i,1000,0]",
-                                                count(SNP_COMMON)-1))
+Gnormalizer <- replaceNA(bind(SNP_COMMON, "u", "pow((1-af)*af,0.5)")) 
+Gnormalizer <- redimension(merge(Gnormalizer, Gdensifier), 
+                           sprintf("<u:double> [dense_variant_id=0:%i,1000,0]", 
+                                   count(SNP_COMMON)-1))
 
 # subtract means and apply variance normalization
 G0 <- sweep(G, 2, apply(G, 2, mean))
 G0 <- project(bind(merge(G0,Gnormalizer), "v", "alt_count/u"), "v")
-G0 <- scidbeval(G0)
+G0 <- scidbeval(G0, temp=TRUE)
 
 # compute sample covariance
-SCV <- scidbeval(tcrossprod(G0)/(ncol(G0)-1))
+SCV <- scidbeval(tcrossprod(G0)/(ncol(G0)-1), temp=TRUE)
 invisible(image(SCV))
 ```
 
 Perform SVD on the covariance matrix, and plot the projection of the observations (individuals) onto the first few principal components:
 
 ```{r}
-SCVsvd <- scidbeval(svd(SCV))
+SCVsvd <- scidbeval(svd(SCV), temp=TRUE)
 H <- SCVsvd$u[,0:9][] %*% diag(SCVsvd$d[0:9][])
 qplot(H[,1], H[,2], xlab="PC1", ylab="PC2")
 ```
