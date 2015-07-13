@@ -85,43 +85,36 @@ stopifnot(ti+tv == snps)
 ti/tv
 ```
 
-How about Ti/Tv of one individual's genotypes, with respect to the reference?
+Now let's look at the distribution of Ti/Tv across the individuals in the population.
 
 ```{r}
-GENOTYPE_HG03209 <- merge(GENOTYPE, SAMPLE$sample_name %==% "HG03209")
-GENOTYPE_HG03209_TI <- merge(GENOTYPE_HG03209, SNP$is_transition %==% TRUE, "variant_id")
-ti_HG03209 <- aggregate(bind(GENOTYPE_HG03209_TI, "alt_copies", "allele1+allele2"),
-                        FUN="sum(alt_copies)")[]
-ti_HG03209
+TITV <- bind(GENOTYPE, "alt_copies", "allele1+allele2")
+TITV <- bind(merge(TITV, SNP$is_transition), c("ti", "tv"), 
+             c("iif(is_transition, alt_copies, 0)",
+               "iif(not is_transition, alt_copies, 0)"))
+TITV <- aggregate(TITV, FUN="sum(ti) as ti, sum(tv) as tv", by = "sample_id")
+TITV <- scidbeval(TITV)[]
 
-GENOTYPE_HG03209_TV <- merge(GENOTYPE_HG03209, SNP$is_transition %==% FALSE, "variant_id")
-tv_HG03209 <- aggregate(bind(GENOTYPE_HG03209_TV, "alt_copies", "allele1+allele2"),
-                        FUN="sum(alt_copies)")[]
-tv_HG03209
-
-ti_HG03209/tv_HG03209
-```
-
-And finally, let's look at the distribution of Ti/Tv across the individuals in the population.
-
-```{r}
-GENOTYPE_TI <- merge(GENOTYPE, SNP$is_transition %==% TRUE, "variant_id")
-TI_BY_SAMPLE <- aggregate(bind(GENOTYPE_TI, "alt_copies", "uint8(allele1+allele2)"),
-                          "sample_id","sum(alt_copies)")
-
-GENOTYPE_TV <- merge(GENOTYPE, SNP$is_transition %==% FALSE, "variant_id")
-TV_BY_SAMPLE <- aggregate(bind(GENOTYPE_TV, "alt_copies", "uint8(allele1+allele2)"),
-                          "sample_id","sum(alt_copies)")
-
-TITV_BY_SAMPLE <- project(bind(TI_BY_SAMPLE,'ti_d','double(alt_copies_sum)'),'ti_d')/TV_BY_SAMPLE
-TITV_BY_SAMPLE <- scidbeval(TITV_BY_SAMPLE)
-
-invisible(hist(TITV_BY_SAMPLE[1:count(SAMPLE)-1], xlab="Ti/Tv", ylab="# individuals", main=""))
+invisible(hist(TITV$ti/TITV$tv, xlab="Ti/Tv", ylab="# individuals", main=""))
 ```
 
 All the data traversal is performed by SciDB in parallel; then the histogram buckets and counts are imported into R memory for plotting. Note how lazily-evaluated subexpressions can be stored, composed, and reused as R variables. This is often a lot nicer than formulating SQL.
 
-On the other hand, small arrays can easily be moved back and forth between SciDB and R, with one pitfall: SciDB arrays are zero-based, while R uses one-based indexing. But as genome scientists, we're right at home dealing with this ;-)
+On the other hand, small arrays can easily be moved back and forth between SciDB and R, with one pitfall: SciDB arrays are zero-based, while R uses one-based indexing. But as genome scientists, we're right at home dealing with this!
+
+We can also calculate Ti/Tv for just one individual, by filtering the input matrix:
+
+```{r}
+TITV <- merge(GENOTYPE, SAMPLE$sample_name %==% "HG03209")
+TITV <- bind(TITV, "alt_copies", "allele1+allele2")
+TITV <- bind(merge(TITV, SNP$is_transition), c("ti", "tv"), 
+             c("iif(is_transition, alt_copies, 0)",
+               "iif(not is_transition, alt_copies, 0)"))
+TITV <- aggregate(TITV, FUN="sum(ti) as ti, sum(tv) as tv", by = "sample_id")
+TITV <- scidbeval(TITV)[]
+
+TITV$ti/TITV$tv
+```
 
 ## Principal component analysis
 
