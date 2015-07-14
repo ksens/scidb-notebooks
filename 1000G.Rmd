@@ -31,6 +31,7 @@ This workbook demonstrates using SciDB's R interface to query and analyze 1000 G
 
 ```{r, warning=FALSE, error=FALSE, message=FALSE}
 require(ggplot2)
+require(pipeR)
 require(scidb)
 scidbconnect()
 SAMPLE <- scidb("KG_SAMPLE")
@@ -54,6 +55,8 @@ GENOTYPE[12345:12350,0,][]
 str(GENOTYPE)
 count(GENOTYPE)
 ```
+
+On the other hand, small arrays can easily be moved back and forth between SciDB and R, with one pitfall: SciDB arrays are zero-based, while R uses one-based indexing. But as genome scientists, we're right at home dealing with that!
 
 ## Transition/transversion ratio
 
@@ -85,35 +88,30 @@ stopifnot(ti+tv == snps)
 ti/tv
 ```
 
-Now let's look at the distribution of Ti/Tv across the individuals in the population.
+Now let's look at the distribution of Ti/Tv across the individuals in the population. We use pipeR's `%>>%` operator to express a multi-step data processing pipeline.
 
 ```{r}
-TITV <- bind(GENOTYPE, "alt_copies", "allele1+allele2")
-TITV <- bind(merge(TITV, SNP$is_transition), c("ti", "tv"), 
+calculate.titv <- function(G) {
+  (bind(G, "alt_copies", "allele1+allele2")
+   %>>% merge(SNP$is_transition)
+   %>>% bind(c("ti", "tv"), 
              c("iif(is_transition, alt_copies, 0)",
                "iif(not is_transition, alt_copies, 0)"))
-TITV <- aggregate(TITV, FUN="sum(ti) as ti, sum(tv) as tv", by = "sample_id")
-TITV <- scidbeval(TITV)[]
+   %>>% aggregate(FUN="sum(ti) as ti, sum(tv) as tv", by = "sample_id")
+   %>>% scidbeval)
+}
+titv <- calculate.titv(GENOTYPE)[]
 
-invisible(hist(TITV$ti/TITV$tv, xlab="Ti/Tv", ylab="# individuals", main=""))
+invisible(hist(titv$ti/titv$tv, xlab="Ti/Tv", ylab="# individuals", main=""))
 ```
 
-All the data traversal is performed by SciDB in parallel; then the histogram buckets and counts are imported into R memory for plotting. Note how lazily-evaluated subexpressions can be stored, composed, and reused as R variables. This is often a lot nicer than formulating SQL.
-
-On the other hand, small arrays can easily be moved back and forth between SciDB and R, with one pitfall: SciDB arrays are zero-based, while R uses one-based indexing. But as genome scientists, we're right at home dealing with this!
+All the data traversal is performed by SciDB in parallel; then the histogram buckets and counts are imported into R memory for plotting. Note that lazily-evaluated subexpressions can be stored, composed, and reused as R variables. This is often a lot nicer than formulating SQL!
 
 We can also calculate Ti/Tv for just one individual, by filtering the input matrix:
 
 ```{r}
-TITV <- merge(GENOTYPE, SAMPLE$sample_name %==% "HG03209")
-TITV <- bind(TITV, "alt_copies", "allele1+allele2")
-TITV <- bind(merge(TITV, SNP$is_transition), c("ti", "tv"), 
-             c("iif(is_transition, alt_copies, 0)",
-               "iif(not is_transition, alt_copies, 0)"))
-TITV <- aggregate(TITV, FUN="sum(ti) as ti, sum(tv) as tv", by = "sample_id")
-TITV <- scidbeval(TITV)[]
-
-TITV$ti/TITV$tv
+titv <- calculate.titv(merge(GENOTYPE, SAMPLE$sample_name %==% "HG03209"))[]
+titv$ti/titv$tv
 ```
 
 ## Principal component analysis
