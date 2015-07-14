@@ -140,7 +140,8 @@ Now construct a matrix `G` where `G[i,j]` is the number of copies of the alt all
 # construct a dense matrix of alt allele counts from the selected sites
 Gdensifier <- (unpack(SNP_COMMON)
           %>>% dimension_rename("i","dense_variant_id")
-          %>>% redimension(sprintf("<dense_variant_id:int64> %s", scidb:::build_dim_schema(VARIANT))))
+          %>>% redimension(sprintf("<dense_variant_id:int64> %s",
+                                   scidb:::build_dim_schema(VARIANT))))
 
 G <- (bind(GENOTYPE, "alt_count", "double(allele1+allele2)")
  %>>% merge(Gdensifier)
@@ -158,7 +159,8 @@ Normalize each variable and compute the sample covariance matrix ("economy-sized
 Gnormalizer <- (bind(SNP_COMMON, "u", "pow((1-af)*af,0.5)")
            %>>% replaceNA
            %>>% merge(Gdensifier)
-           %>>% redimension(sprintf("<u:double> [dense_variant_id=0:%i,1000,0]", count(SNP_COMMON)-1)))
+           %>>% redimension(sprintf("<u:double> [dense_variant_id=0:%i,1000,0]",
+                                    count(SNP_COMMON)-1)))
 
 # subtract means and apply variance normalization
 G0 <- (sweep(G, 2, apply(G, 2, mean))
@@ -237,28 +239,26 @@ Linkage disequilibrum (LD) describes the correlation among the alleles observed 
 LDchrom <- "21"
 LDlo <- 35409243
 LDhi <- 36065894
-LD_SNP <- subset(SNP, sprintf("chrom = '%s' and pos >= %i and pos < %i",
-                              LDchrom, LDlo, LDhi))
-LD_SNP <- subset(merge(LD_SNP, scidb("KG_VARIANT_MULT_VAL")),
-                 sprintf("af>= %f and af <=%f ", 0.1, 0.9))
-LD_SNP <- redimension(LD_SNP, sprintf("<signature:string> [variant_id=0:%i,10000,0]",
-                                      nrow(LD_SNP)-1))
-LD_SNP <- scidbeval(LD_SNP)
+LD_SNP <- (subset(SNP, sprintf("chrom = '%s' and pos >= %i and pos < %i", LDchrom, LDlo, LDhi))
+      %>>% merge(scidb("KG_VARIANT_MULT_VAL"))
+      %>>% subset(sprintf("af>= %f and af <=%f ", 0.1, 0.9))
+      %>>% redimension(sprintf("<signature:string> [variant_id=0:%i,10000,0]", nrow(.)-1))
+      %>>% scidbeval)
 count(LD_SNP)
 ```
 
 Formulate L where L[i,j] is the alt allele count in sample i at site j.
 
 ```{r}
-Ldensifier <- dimension_rename(unpack(LD_SNP),"i","dense_variant_id")
-Ldensifier <- redimension(Ldensifier, sprintf("<dense_variant_id:int64> %s", 
-                                              scidb:::build_dim_schema(VARIANT))) 
+Ldensifier <- (dimension_rename(unpack(LD_SNP),"i","dense_variant_id")
+          %>>% redimension(sprintf("<dense_variant_id:int64> %s",
+                                   scidb:::build_dim_schema(VARIANT))))
 
-L <- bind(GENOTYPE, "alt_count", "double(allele1+allele2)")
-L <- redimension(merge(L, Ldensifier),
-                 sprintf("<alt_count:double NULL> [sample_id = 0:%i,100,0, dense_variant_id=0:%i,100,0]", 
-                         count(SAMPLE)-1, count(LD_SNP)-1))
-L <- scidbeval(L, temp=TRUE)
+L <- (bind(GENOTYPE, "alt_count", "double(allele1+allele2)")
+ %>>% merge(Ldensifier)
+ %>>% redimension(sprintf("<alt_count:double NULL> [sample_id = 0:%i,100,0, dense_variant_id=0:%i,100,0]",
+                          count(SAMPLE)-1, count(LD_SNP)-1))
+ %>>% scidbeval(temp=TRUE))
 ```
 
 Compute the sample correlation matrix for the sites, providing estimates of the linkage disequilibrium (r) for each pair of SNPs. Reference: doi:10.1534/genetics.108.093153
