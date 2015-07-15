@@ -88,13 +88,13 @@ stopifnot(ti+tv == snps)
 ti/tv
 ```
 
-Now let's look at the distribution of Ti/Tv across the individuals in the population. We use pipeR's `%>>%` operator to express a multi-step data processing pipeline.
+Now let's look at the distribution of Ti/Tv across the individuals in the population. We use pipeR's `%>>%` operator to express a multi-step data processing pipeline, where `f(x) %>>% g(y)` denotes `g(f(x),y)`.
 
 ```{r}
 calculate.titv <- function(G) {
   (bind(G, "alt_copies", "allele1+allele2")
    %>>% merge(SNP$is_transition)
-   %>>% bind(c("ti", "tv"), 
+   %>>% bind(c("ti", "tv"),
              c("iif(is_transition, alt_copies, 0)",
                "iif(not is_transition, alt_copies, 0)"))
    %>>% aggregate(FUN="sum(ti) as ti, sum(tv) as tv", by = "sample_id")
@@ -280,55 +280,37 @@ We see several distinct haplotype blocks in this region. Unusually long haplotyp
 
 Hardy-Weinberg equilibrium (HWE) describes the diploid genotype frequencies expected as a function of the allele frequencies at a site, under various idealistic assumptions. Let's count the genotypes observed across the population at each SNP:
 
-```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
-#tic()
-# unbelievably slow:
-#GT_CTS <- aggregate(merge(GENOTYPE, SNP, "variant_id"), by=list("variant_id", "allele1", "allele2"), FUN="count(*)")
-#GT_CTS <- scidbeval(GT_CTS)
-#toc()
-```
-
 ```{r}
-GENOTYPE_SNP <- project(merge(GENOTYPE, SNP, "variant_id"), c("allele1","allele2"))
-GT_HOM0_BY_SNP <- aggregate(subset(GENOTYPE_SNP, "allele1=0 and allele2=0"),
-                            by="variant_id", FUN="count(allele1)", eval=TRUE)
-GT_HOM1_BY_SNP <- aggregate(subset(GENOTYPE_SNP, "allele1=1 and allele2=1"),
-                            by="variant_id", FUN="count(allele1)", eval=TRUE)
-GT_HET_BY_SNP <- aggregate(subset(GENOTYPE_SNP, "(allele1=1 and allele2=0) or
-                                                 (allele1=0 and allele2=1)"),
-                           by="variant_id", FUN="count(allele1)", eval=TRUE)
-
-# merge (cbind) these three vectors. Use all=TRUE since they're sparse; otherwise,
-# we'd lose rows where any of the three entries is empty.
-GT_BY_SNP <- merge(attribute_rename(GT_HOM0_BY_SNP, "allele1_count", "AA"),
-             merge(attribute_rename(GT_HET_BY_SNP, "allele1_count", "Aa"),
-                   attribute_rename(GT_HOM1_BY_SNP, "allele1_count", "aa"),
-                   all=TRUE), all=TRUE)
-stopifnot(count(GT_BY_SNP) == count(SNP))
-GT_BY_SNP <- scidbeval(replaceNA(GT_BY_SNP))
-GT_BY_SNP[0:9,][]
+HW_TABLE <- (merge(GENOTYPE, SNP, "variant_id")
+        %>>% bind(c("AA","aa","Aa"),
+                  c("iif(allele1=0 and allele2=0,1,0)", "iif(allele1=1 and allele2=1,1,0)",
+                    "iif((allele1=1 and allele2=0) or (allele1=0 and allele2=1),1,0)"))
+        %>>% aggregate(FUN="sum(AA) as AA, sum(aa) as aa, sum(Aa) as Aa",by="variant_id")
+        %>>% scidbeval(temp=TRUE))
+HW_TABLE[0:9,][]
 ```
 
 Add the allele frequencies:
 
 ```{r}
-HW_BY_SNP <- bind(GT_BY_SNP, "N", "AA + Aa + aa")
-HW_BY_SNP <- bind(HW_BY_SNP, "p", "double(2*AA + Aa)/(2*N)")
-HW_BY_SNP <- bind(HW_BY_SNP, "q", "double(2*aa + Aa)/(2*N)")
-HW_BY_SNP <- scidbeval(HW_BY_SNP)
+HW_BY_SNP <- (bind(HW_TABLE, "N", "AA + Aa + aa")
+         %>>% bind("p", "double(2*AA + Aa)/(2*N)")
+         %>>% bind("q", "double(2*aa + Aa)/(2*N)")
+         %>>% scidbeval)
 head(HW_BY_SNP)
 ```
 
 Compute the expected genotype counts under HWE, and the chi^2 statistics for deviation from equilibrium.
 
 ```{r}
-HW_BY_SNP <- bind(HW_BY_SNP, "E_AA", "N*p*p")
-HW_BY_SNP <- bind(HW_BY_SNP, "E_Aa", "2*N*p*q")
-HW_BY_SNP <- bind(HW_BY_SNP, "E_aa", "N*q*q")
-HW_BY_SNP <- bind(HW_BY_SNP, "chi_2", "pow(AA-E_AA,2)/E_AA +
-                                       pow(Aa-E_Aa,2)/E_Aa +
-                                       pow(aa-E_aa,2)/E_aa")
-HW_BY_SNP <- scidbeval(HW_BY_SNP)
+HW_BY_SNP <- (HW_BY_SNP
+         %>>% bind("E_AA", "N*p*p")
+         %>>% bind("E_Aa", "2*N*p*q")
+         %>>% bind("E_aa", "N*q*q")
+         %>>% bind("chi_2", "pow(AA-E_AA,2)/E_AA +
+                             pow(Aa-E_Aa,2)/E_Aa +
+                             pow(aa-E_aa,2)/E_aa")
+         %>>% scidbeval)
 round(head(HW_BY_SNP),4)
 
 # plot a sample of Aa vs. E_Aa
