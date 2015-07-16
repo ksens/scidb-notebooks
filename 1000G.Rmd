@@ -27,7 +27,7 @@ toc <- function()
 }
 ```
 
-SciDB is a scale-out DBMS designed for scientific use cases, with built-in capabilities for sophisticated mathematical calculations beyond the typical domain of SQL/NoSQL systems. This workbook demonstrates using SciDB's R interface to query and analyze 1000 Genomes phase 3 genotype data, including both simple aggregations, such as computing transition/transversion ratios, and more advanced calculations, such as principal component analysis and estimating linkage disequilibrium. SciDB delivers a unified environment for quantitative data warehousing and scientific data analysis, with horizontal scalability for interactive performance on vast datasets, and interfaces easily adopted by analysts and statisticians.
+SciDB is a scale-out DBMS designed for scientific use cases, with built-in capabilities for sophisticated mathematical calculations beyond the typical domain of SQL/NoSQL systems. This workbook demonstrates using SciDB's R interface for scalable query and analysis of 1000 Genomes phase 3 genotype data, including simple aggregations such as computing transition/transversion ratios, and more advanced calculations such as principal component analysis and estimating linkage disequilibrium.
 
 First, we connect to SciDB and obtain handles to the data arrays. For development/testing, we'll just look at chromosomes 21 and 22 across the 2,504 individuals.
 
@@ -156,7 +156,7 @@ head(G)
 
 Normalize each variable and compute the sample covariance matrix ("economy-sized", since we have many more variables than observations):
 
-```{r}
+```{r, fig.width=6, fig.height=6}
 # Normalization factor for the variance of each site - proportional to sqrt(p*(1-p))
 Gnormalizer <- (bind(SNP_COMMON, "u", "pow((1-af)*af,0.5)")
            %>>% replaceNA
@@ -176,55 +176,39 @@ SCV <- scidbeval(tcrossprod(G0)/(ncol(G0)-1), temp=TRUE)
 invisible(image(SCV))
 ```
 
-Perform SVD on the covariance matrix, and plot the projection of the observations (individuals) onto the first few principal components:
+Both axes above are simply the 2,504 samples in the phase 3 data. The observed correlation structure probably just reflects how the 1000 Genomes project added sample batches of various ethnicities over time.
 
-```{r}
+Now perform SVD on the covariance matrix, and plot the projection of the observations (individuals) onto the first few principal components:
+
+```{r, fig.width=6, fig.height=5.5}
 SCVsvd <- scidbeval(svd(SCV), temp=TRUE)
 H <- SCVsvd$u[,0:9][] %*% diag(SCVsvd$d[0:9][])
 qplot(H[,1], H[,2], xlab="PC1", ylab="PC2")
 ```
 
-For the avoidance of doubt: all the matrix calculations were parallelized in SciDB, not computed by the local R process. We didn't have to dump a lot of data into any separate system for numerical analysis.
+For the avoidance of doubt: all the matrix calculations here were parallelized in SciDB, not computed by the local R process. We didn't have to dump a lot of data into any separate system for numerical analysis.
 
 The PCA's interpretation becomes clear if we label the points by the ethnicity of each individual. This also provides an elementary example of joining "phenotypic data":
 
-```{r, echo=FALSE}
+```{r, warning=FALSE}
 pd <- data.frame(PC1=H[,1], PC2=H[,2], PC3=H[,3],
                  population=scidb("KG_SAMPLE_POPL_CODE")$Population[][,2])
 
 popnames <- list(
-  ACB='Caribbean',
-  ASW='African-Amer',
-  BEB='South Asian',
-  CEU='European',
-  CHB='East Asian',
-  CDX='East Asian',
-  CHS='East Asian',
-  CLM='Central Amer',
-  ESN='African',
-  FIN='European',
-  GBR='European',
-  GIH='South Asian',
-  GWD='African',
-  IBS='European',
-  ITU='South Asian',
-  JPT='East Asian',
-  KHV='East Asian',
-  LWK='African',
-  MSL='African',
-  MXL='Central Amer',
-  PEL='South Amer',
-  PJL='South Asian',
-  PUR='Caribbean',
-  STU='South Asian',
-  TSI='European',
-  YRI='African'
+  ACB='Caribbean', ASW='African-Amer', BEB='South Asian', CEU='European',
+  CHB='East Asian', CDX='East Asian', CHS='East Asian', CLM='Central Amer',
+  ESN='African', FIN='European', GBR='European', GIH='South Asian',
+  GWD='African', IBS='European', ITU='South Asian', JPT='East Asian',
+  KHV='East Asian', LWK='African', MSL='African', MXL='Central Amer',
+  PEL='South Amer', PJL='South Asian', PUR='Caribbean', STU='South Asian',
+  TSI='European', YRI='African'
 )
 for (i in 1:length(popnames)) {
   levels(pd$population)[levels(pd$population) == names(popnames)[i]] <- popnames[[names(popnames)[i]]]
 }
 
-cbbPalette <- c("#E69F00", "#CC79A7", "#D55E00", "#56B4E9", "#009E73", "#999999", "#0072B2", "#FF0000")
+cbbPalette <- c("#E69F00", "#CC79A7", "#D55E00", "#56B4E9",
+                "#009E73", "#999999", "#0072B2", "#FF0000")
 
 ggplot(pd, aes(PC1,PC2,shape=population,color=population)) + geom_point() + scale_shape_manual(values=(1:nrow(pd))+1) + scale_color_manual(values=cbbPalette) + theme(panel.background=element_blank(), legend.text=element_text(size=10))
 
@@ -265,7 +249,7 @@ L <- (bind(GENOTYPE, "alt_count", "double(allele1+allele2)")
 
 Compute the sample correlation matrix for the sites, providing estimates of the linkage disequilibrium (r) for each pair of SNPs. Reference: doi:10.1534/genetics.108.093153
 
-```{r}
+```{r, fig.width=6.5, fig.height=6.5}
 # reference: https://github.com/Paradigm4/SciDBR/wiki/Correlation-matrix-example
 L0 <- sweep(L, 2, apply(L, 2, mean))
 Lcov <- crossprod(L0)/(nrow(L0) - 1)
