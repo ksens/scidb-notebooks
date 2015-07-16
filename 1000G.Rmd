@@ -188,7 +188,7 @@ The PCA's interpretation becomes clear if we label the points by the ethnicity o
 
 ```{r, echo=FALSE}
 pd <- data.frame(PC1=H[,1], PC2=H[,2], PC3=H[,3],
-                 population=scidb("KG_SAMPLE_POPL_CODE")$Population[])
+                 population=scidb("KG_SAMPLE_POPL_CODE")$Population[][,2])
 
 popnames <- list(
   ACB='Caribbean',
