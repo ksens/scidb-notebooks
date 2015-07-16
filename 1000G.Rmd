@@ -27,7 +27,9 @@ toc <- function()
 }
 ```
 
-This workbook demonstrates using SciDB's R interface to query and analyze 1000 Genomes phase 3 genotype data. First, we connect to SciDB and obtain handles to the data arrays. For development/testing, we'll just look at chromosomes 21 and 22 across the 2,504 individuals.
+SciDB is a scale-out DBMS designed for scientific use cases, with built-in capabilities for sophisticated mathematical calculations beyond the typical domain of SQL/NoSQL systems. This workbook demonstrates using SciDB's R interface to query and analyze 1000 Genomes phase 3 genotype data, including both simple aggregations, such as computing transition/transversion ratios, and more advanced calculations, such as principal component analysis and estimating linkage disequilibrium. SciDB delivers a unified environment for quantitative data warehousing and scientific data analysis, with horizontal scalability for interactive performance on vast datasets, and interfaces easily adopted by analysts and statisticians.
+
+First, we connect to SciDB and obtain handles to the data arrays. For development/testing, we'll just look at chromosomes 21 and 22 across the 2,504 individuals.
 
 ```{r, warning=FALSE, error=FALSE, message=FALSE}
 require(ggplot2)
