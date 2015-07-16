@@ -1,7 +1,7 @@
 # scidb-notebooks
 ***From DNAnexus R&D: examples using SciDB for scalable statistical analysis of geno+pheno datasets***
 
-SciDB is a scale-out DBMS designed for scientific use cases, with built-in capabilities for sophisticated mathematical calculations beyond the typical domain of SQL/NoSQL systems. These notebooks demonstrate using SciDB to work with genotype & phenotype datasets, including both simple aggregations and advanced calculations.
+[SciDB](http://www.paradigm4.com/) is a scale-out DBMS designed for scientific use cases, with built-in capabilities for sophisticated mathematical calculations beyond the typical domain of SQL/NoSQL systems. These notebooks demonstrate using SciDB to work with genotype & phenotype datasets, including both simple aggregations and advanced calculations.
 
 - [**1000 Genomes Exercises**](http://htmlpreview.github.io/?https://github.com/dnanexus-rnd/scidb-notebooks/blob/master/1000G.html) ([source](https://github.com/dnanexus-rnd/scidb-notebooks/blob/master/1000G.Rmd))
 
