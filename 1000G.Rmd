@@ -29,7 +29,7 @@ toc <- function()
 
 SciDB is a scale-out DBMS designed for scientific use cases, with built-in capabilities for sophisticated mathematical calculations beyond the typical domain of SQL/NoSQL systems. This workbook demonstrates using SciDB's R interface for scalable query and analysis of 1000 Genomes phase 3 genotype data, including simple aggregations such as computing transition/transversion ratios, and more advanced calculations such as principal component analysis and estimating linkage disequilibrium.
 
-First, we connect to SciDB and obtain handles to the data arrays. For development/testing, we'll just look at chromosomes 21 and 22 across the 2,504 individuals.
+First, we connect to SciDB and obtain handles to the data arrays. For development/testing on a modest machine, we'll just look at chromosomes 21 and 22 across the 2,504 individuals; but SciDB can scale out on a cluster to handle arbitrarily large datasets.
 
 ```{r, warning=FALSE, error=FALSE, message=FALSE}
 require(ggplot2)
