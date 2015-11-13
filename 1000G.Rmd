@@ -38,10 +38,10 @@ require(scidb)
 scidbconnect()
 SAMPLE <- scidb("KG_SAMPLE")
 CHROMOSOME <- scidb("KG_CHROMOSOME")
-VARIANT <- merge(scidb("KG_VARIANT"), subset(CHROMOSOME, "chrom='21' or chrom='22'"))
+VARIANT <- merge(scidb("KG_VARIANT"), subset(CHROMOSOME, "chromosome='10' or chromosome='21' or chromosome='22'"))
 VARIANT <- scidbeval(VARIANT)
-GENOTYPE <- project(merge(scidb("KG_GENOTYPE_PARSED"),project(VARIANT,'chrom')),
-                    c("allele1","allele2","phased"))
+GENOTYPE <- project(merge(scidb("KG_GENOTYPE"),project(VARIANT,'chromosome')),
+                    c("allele_1","allele_2","phase"))
 ```
 
 The `VARIANT` array for chomosomes 21 and 22 has been stored in SciDB's memory (but not the memory of our local R process) by the `scidbeval()` expression above. In contrast, the `GENOTYPE` array is merely a lazy expression, denoting but not materializing the subset of all the genotypes on chromosomes 21 and 22. Because `GENOTYPE` is our biggest array by far, we avoid copying any significant portion of it.
@@ -53,7 +53,7 @@ head(VARIANT)
 str(VARIANT)
 count(VARIANT)
 
-GENOTYPE[12345:12350,0,][]
+GENOTYPE[9,60494,60494,1,0:4][]
 str(GENOTYPE)
 count(GENOTYPE)
 ```
@@ -66,14 +66,14 @@ The transition/transversion ratio (Ti/Tv) is a common quality metric for variant
 
 ```{r}
 # count biallelic SNPs
-SNP <- subset(VARIANT, "(ref='A' or ref='G' or ref='C' or ref='T') and
-                        (alt='A' or alt='G' or alt='C' or alt='T')")
+SNP <- subset(VARIANT, "(reference='A' or reference='G' or reference='C' or reference='T') and
+                        (alternate='A' or alternate='G' or alternate='C' or alternate='T')")
 snps <- count(SNP)
 snps
 
 # annotate each SNP as to whether it's a transition (or else transversion)
-transitions_filter_str <- "(ref='A' and alt='G') or (ref='G' and alt='A') or
-                           (ref='C' and alt='T') or (ref='T' and alt='C')"
+transitions_filter_str <- "(reference='A' and alternate='G') or (reference='G' and alternate='A') or
+                           (reference='C' and alternate='T') or (reference='T' and alternate='C')"
 SNP <- bind(SNP,"is_transition",paste("bool(iif(", transitions_filter_str, ",TRUE,FALSE))"))
 SNP <- scidbeval(SNP)
 
@@ -94,7 +94,7 @@ Now let's look at the distribution of Ti/Tv across the individuals in the popula
 
 ```{r}
 calculate.titv <- function(G) {
-  (bind(G, "alt_copies", "allele1+allele2")
+  (bind(G, "alt_copies", "iif(allele_1,1,0)+ iif(allele_2,1,0)")
    %>>% merge(SNP$is_transition)
    %>>% bind(c("ti", "tv"),
              c("iif(is_transition, alt_copies, 0)",
@@ -112,7 +112,7 @@ All the data traversal is performed by SciDB in parallel; then the histogram buc
 We can also calculate Ti/Tv for just one individual, by filtering the input matrix:
 
 ```{r}
-titv <- calculate.titv(merge(GENOTYPE, SAMPLE$sample_name %==% "HG03209"))[]
+titv <- calculate.titv(merge(GENOTYPE, SAMPLE$sample %==% "HG03209"))[]
 titv$ti/titv$tv
 ```
 
@@ -121,9 +121,9 @@ titv$ti/titv$tv
 Now let's find principal components of the genotype data and project the individual genomes onto them, revealing the underlying population structure. Begin by selecting common SNPs, because rare variants inherently don't contribute much to the overall variance.
 
 ```{r}
-SNP_COMMON <- (merge(SNP,scidb("KG_VARIANT_MULT_VAL"))
+SNP_COMMON <- (merge(SNP,scidb("KG_VARIANT"))
           %>>% subset(sprintf("af>= %f and af <=%f ", 0.1, 0.9))
-          %>>% redimension(sprintf("<signature:string, af:double NULL> [variant_id=0:%i,10000,0]", nrow(.)-1))
+          %>>% redimension("<reference:string, af:double NULL, chromosome_id: int64, start: int64, end: int64, alternate_id:int64> [variant_id=0:*,10000,0]")
           %>>% scidbeval)
 count(SNP_COMMON)
 ```
@@ -145,7 +145,7 @@ Gdensifier <- (unpack(SNP_COMMON)
           %>>% redimension(sprintf("<dense_variant_id:int64> %s",
                                    scidb:::build_dim_schema(VARIANT))))
 
-G <- (bind(GENOTYPE, "alt_count", "double(allele1+allele2)")
+G <- (bind(GENOTYPE, "alt_count", "double(iif(allele_1, 1, 0) + iif(allele_2, 1, 0))")
  %>>% merge(Gdensifier)
  %>>% redimension(sprintf("<alt_count:double NULL> [sample_id = 0:%i,1000,0, dense_variant_id=0:%i,1000,0]",
                           count(SAMPLE)-1, count(SNP_COMMON)-1))
@@ -161,8 +161,8 @@ Normalize each variable and compute the sample covariance matrix ("economy-sized
 Gnormalizer <- (bind(SNP_COMMON, "u", "pow((1-af)*af,0.5)")
            %>>% replaceNA
            %>>% merge(Gdensifier)
-           %>>% redimension(sprintf("<u:double> [dense_variant_id=0:%i,1000,0]",
-                                    count(SNP_COMMON)-1)))
+           %>>% redimension(sprintf("<u:double> [dense_variant_id=0:%i,100,0]", count(SNP_COMMON)-1))
+           )
 
 # subtract means and apply variance normalization
 G0 <- (sweep(G, 2, apply(G, 2, mean))
