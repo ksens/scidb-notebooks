@@ -121,11 +121,80 @@ titv$ti/titv$tv
 Now let's find principal components of the genotype data and project the individual genomes onto them, revealing the underlying population structure. Begin by selecting common SNPs, because rare variants inherently don't contribute much to the overall variance.
 
 ```{r}
-SNP_COMMON <- (merge(SNP,scidb("KG_VARIANT"))
-          %>>% subset(sprintf("af>= %f and af <=%f ", 0.1, 0.9))
-          %>>% redimension("<reference:string, af:double NULL, chromosome_id: int64, start: int64, end: int64, alternate_id:int64> [variant_id=0:*,10000,0]")
-          %>>% scidbeval)
-count(SNP_COMMON)
+#SNP_COMMON <- (merge(SNP,scidb("KG_VARIANT"))
+#          %>>% subset(sprintf("af>= %f and af <=%f ", 0.1, 0.9))
+#          %>>% redimension("<reference:string, af:double NULL, chromosome_id: int64, start: int64, end: int64, alternate_id:int64> [variant_id=0:*,10000,0]")
+##          %>>% redimension(sprintf("<signature:string, af:double NULL> [variant_id=0:%i,10000,0]", nrow(.)-1))
+#          %>>% scidbeval)
+#count(SNP_COMMON)
+
+#Select all variants whose af is greater than min_af and less than max_af; if variant_limit is
+#specified, then select up to that many variants, chosen randomly. 
+#<value> [sample_id, variant_number] where value is 2 if the variant is present in both alleles,
+#1 if the variant is present in one allele or 0 otherwise. Then compute the first 3 principal 
+#compnents of this matrix. Make a cute 3D plot.
+#The plot uses https://github.com/bwlewis/rthreejs
+#pca = function(min_af = 0.1, max_af = 0.9, variant_limit, chunk_size=512)
+min_af = 0.1
+max_af = 0.9
+chunk_size=512
+#variant_limit=100
+
+t0=proc.time()
+KG_CHROMOSOME = scidb("KG_CHROMOSOME")
+KG_VARIANT    = scidb("KG_VARIANT")
+KG_GENOTYPE   = scidb("KG_GENOTYPE")
+KG_SAMPLE     = scidb("KG_SAMPLE")
+
+KG_POPULATION = scidb("KG_POPULATION")
+selected_variants = dimension_rename(project(unpack(subset(KG_VARIANT, sprintf("af>%f and af<%f", min_af, max_af))), c("chromosome_id, start, end, alternate_id")), old="i", new="dense_variant_id")
+if (exists('variant_limit')) # (!missing(variant_limit))
+{
+ selected_variants = bind(selected_variants, "randomizer", "random()")
+ selected_variants = sort(selected_variants, attributes="randomizer")
+ selected_variants = selected_variants[between(0,variant_limit-1),]
+ selected_variants = dimension_rename(selected_variants, old="n", new="dense_variant_id")
+}
+selected_variants = scidbeval(selected_variants, temp=TRUE)
+num_variants = count(selected_variants)
+num_samples = count(KG_SAMPLE)
+print(sprintf("%f %f: Found %i variants that fit the criteria; running [%i x %i]", 
+              (proc.time()-t0)[3], (proc.time()-t0)[3], num_variants, num_variants, num_samples))
+t1=proc.time()
+
+redim_guide = redimension(selected_variants, sprintf("<dense_variant_id:int64> %s", scidb:::build_dim_schema(KG_VARIANT)))
+
+redim_matrix = bind(KG_GENOTYPE, "v", "double(iif(allele_1 and allele_2, 2.0, iif(allele_1 or allele_2, 1.0, 0.0)))")
+redim_matrix = merge(redim_matrix, redim_guide)
+redim_matrix = redimension(redim_matrix, sprintf("<v:double null> [sample_id = 0:%i,%i,0, dense_variant_id=0:%i,%i,0]", 
+                                                 num_samples-1, chunk_size, num_variants-1, chunk_size))
+redim_matrix = replaceNA(redim_matrix)
+redim_matrix = scidbeval(redim_matrix, temp=TRUE)
+print(sprintf("%f %f: Built matrix", (proc.time()-t0)[3], (proc.time()-t1)[3]))
+t1=proc.time()
+
+centered = sweep(redim_matrix, 2, apply(redim_matrix, 2, mean))
+centered = scidbeval(centered, temp=TRUE)
+print(sprintf("%f %f: Centered", (proc.time()-t0)[3], (proc.time()-t1)[3]))
+t1=proc.time()
+
+#Covariance if you like
+#Y = t(X)  # samples in columns
+#Y = Y - apply(Y,2,mean)
+#CV = crossprod(Y)/(nrow(Y) - 1)
+#image(CV)
+
+svded =  scidb(sprintf("gesvd(%s, 'left')", centered@name))
+svded = scidbeval(svded, temp=TRUE)
+print(sprintf("%f %f: SVD Computed", (proc.time()-t0)[3], (proc.time()-t1)[3]))
+
+download = svded[,0:2][]
+color = iqdf(project(bind(merge(KG_SAMPLE, KG_POPULATION), "color", "iif(population='AMR', 'blue', iif(population='AFR', 'red', iif(population='EUR', 'green', iif(population='EAS', 'purple', 'orange'))))"), "color"), n=Inf)$color
+
+#See https://github.com/bwlewis/rthreejs
+library(threejs)
+scatterplot3js(download, size=0.5, color=color)
+
 ```
 
 The redimension operation just removes some unneeded attributes and dimensions.
