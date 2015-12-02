@@ -120,20 +120,10 @@ titv$ti/titv$tv
 
 Now let's find principal components of the genotype data and project the individual genomes onto them, revealing the underlying population structure. Begin by selecting common SNPs, because rare variants inherently don't contribute much to the overall variance.
 
-```{r}
-#SNP_COMMON <- (merge(SNP,scidb("KG_VARIANT"))
-#          %>>% subset(sprintf("af>= %f and af <=%f ", 0.1, 0.9))
-#          %>>% redimension("<reference:string, af:double NULL, chromosome_id: int64, start: int64, end: int64, alternate_id:int64> [variant_id=0:*,10000,0]")
-##          %>>% redimension(sprintf("<signature:string, af:double NULL> [variant_id=0:%i,10000,0]", nrow(.)-1))
-#          %>>% scidbeval)
-#count(SNP_COMMON)
+Select all variants whose af is greater than min_af and less than max_af; if variant_limit is
+specified, then select up to that many variants, chosen randomly. 
 
-#Select all variants whose af is greater than min_af and less than max_af; if variant_limit is
-#specified, then select up to that many variants, chosen randomly. 
-#<value> [sample_id, variant_number] where value is 2 if the variant is present in both alleles,
-#1 if the variant is present in one allele or 0 otherwise. Then compute the first 3 principal 
-#compnents of this matrix. Make a cute 3D plot.
-#The plot uses https://github.com/bwlewis/rthreejs
+```{r}
 #pca = function(min_af = 0.1, max_af = 0.9, variant_limit, chunk_size=512)
 min_af = 0.1
 max_af = 0.9
@@ -161,9 +151,17 @@ num_samples = count(KG_SAMPLE)
 print(sprintf("%f %f: Found %i variants that fit the criteria; running [%i x %i]", 
               (proc.time()-t0)[3], (proc.time()-t0)[3], num_variants, num_variants, num_samples))
 t1=proc.time()
+```
+The redimension operation just removes some unneeded attributes and dimensions.
 
+```{r}
 redim_guide = redimension(selected_variants, sprintf("<dense_variant_id:int64> %s", scidb:::build_dim_schema(KG_VARIANT)))
 
+```
+<value> [sample_id, variant_number] where value is 2 if the variant is present in both alleles,
+1 if the variant is present in one allele or 0 otherwise. 
+
+```{r}
 redim_matrix = bind(KG_GENOTYPE, "v", "double(iif(allele_1 and allele_2, 2.0, iif(allele_1 or allele_2, 1.0, 0.0)))")
 redim_matrix = merge(redim_matrix, redim_guide)
 redim_matrix = redimension(redim_matrix, sprintf("<v:double null> [sample_id = 0:%i,%i,0, dense_variant_id=0:%i,%i,0]", 
@@ -173,23 +171,43 @@ redim_matrix = scidbeval(redim_matrix, temp=TRUE)
 print(sprintf("%f %f: Built matrix", (proc.time()-t0)[3], (proc.time()-t1)[3]))
 t1=proc.time()
 
+```
+
+Sweep out the column means
+```{r}
 centered = sweep(redim_matrix, 2, apply(redim_matrix, 2, mean))
 centered = scidbeval(centered, temp=TRUE)
 print(sprintf("%f %f: Centered", (proc.time()-t0)[3], (proc.time()-t1)[3]))
 t1=proc.time()
 
-#Covariance if you like
+```
+## Calculate covariance
+
+Calculate and display the covariance
+[Previous text]: Normalize each variable and compute the sample covariance matrix ("economy-sized", since we have many more variables than observations):
+```{r}
 X = centered
 Y = t(X)  # samples in columns
 Y = Y - apply(Y,2,mean)
 CV = crossprod(Y)/(nrow(Y) - 1)
-image(CV)
+invisible(image(CV))
+```
+Both axes above are simply the 2,504 samples in the phase 3 data. The observed correlation structure probably just reflects how the 1000 Genomes project added sample batches of various ethnicities over time.
 
+Now perform SVD on the covariance matrix, and plot the projection of the observations (individuals) onto the first three principal components:
+
+```{r}
 svded =  scidb(sprintf("gesvd(%s, 'left')", centered@name))
 svded = scidbeval(svded, temp=TRUE)
 print(sprintf("%f %f: SVD Computed", (proc.time()-t0)[3], (proc.time()-t1)[3]))
 
 download = svded[,0:2][]
+
+```
+Make a cute 3D plot.
+The plot uses https://github.com/bwlewis/rthreejs
+
+```{r}
 color = iqdf(project(bind(merge(KG_SAMPLE, KG_POPULATION), "color", "iif(population='AMR', 'blue', iif(population='AFR', 'red', iif(population='EUR', 'green', iif(population='EAS', 'purple', 'orange'))))"), "color"), n=Inf)$color
 
 #See https://github.com/bwlewis/rthreejs
@@ -198,71 +216,16 @@ scatterplot3js(download, size=0.5, color=color)
 
 ```
 
-The redimension operation just removes some unneeded attributes and dimensions.
-
-```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
-# downsampling for test/dev:
-# SNP_COMMON <- scidbeval(bernoulli(SNP_COMMON, 0.1, 42))
-# count(SNP_COMMON)
-```
-
-Now construct a matrix `G` where `G[i,j]` is the number of copies of the alt allele found in sample `i`, common SNP `j`. The samples are observations, and the SNPs are variables. Reference: doi:10.1371/journal.pgen.0020190
-
-```{r}
-# construct a dense matrix of alt allele counts from the selected sites
-Gdensifier <- (unpack(SNP_COMMON)
-          %>>% dimension_rename("i","dense_variant_id")
-          %>>% redimension(sprintf("<dense_variant_id:int64> %s",
-                                   scidb:::build_dim_schema(VARIANT))))
-
-G <- (bind(GENOTYPE, "alt_count", "double(iif(allele_1, 1, 0) + iif(allele_2, 1, 0))")
- %>>% merge(Gdensifier)
- %>>% redimension(sprintf("<alt_count:double NULL> [sample_id = 0:%i,1000,0, dense_variant_id=0:%i,1000,0]",
-                          count(SAMPLE)-1, count(SNP_COMMON)-1))
- %>>% scidbeval(temp=TRUE))
-dim(G) 
-head(G) 
-```
-
-Normalize each variable and compute the sample covariance matrix ("economy-sized", since we have many more variables than observations):
-
-```{r, fig.width=6, fig.height=6}
-# Normalization factor for the variance of each site - proportional to sqrt(p*(1-p))
-Gnormalizer <- (bind(SNP_COMMON, "u", "pow((1-af)*af,0.5)")
-           %>>% replaceNA
-           %>>% merge(Gdensifier)
-           %>>% redimension(sprintf("<u:double> [dense_variant_id=0:%i,100,0]", count(SNP_COMMON)-1))
-           )
-
-# subtract means and apply variance normalization
-G0 <- (sweep(G, 2, apply(G, 2, mean))
-  %>>% merge(Gnormalizer)
-  %>>% bind("v", "alt_count/u")
-  %>>% project("v")
-  %>>% scidbeval(temp=TRUE))
-
-# compute sample covariance
-SCV <- scidbeval(tcrossprod(G0)/(ncol(G0)-1), temp=TRUE)
-invisible(image(SCV))
-```
-
-Both axes above are simply the 2,504 samples in the phase 3 data. The observed correlation structure probably just reflects how the 1000 Genomes project added sample batches of various ethnicities over time.
-
-Now perform SVD on the covariance matrix, and plot the projection of the observations (individuals) onto the first few principal components:
-
-```{r, fig.width=6, fig.height=5.5}
-SCVsvd <- scidbeval(svd(SCV), temp=TRUE)
-H <- SCVsvd$u[,0:9][] %*% diag(SCVsvd$d[0:9][])
-qplot(H[,1], H[,2], xlab="PC1", ylab="PC2")
-```
-
 For the avoidance of doubt: all the matrix calculations here were parallelized in SciDB, not computed by the local R process. We didn't have to dump a lot of data into any separate system for numerical analysis.
+
+[Previous text]: Now construct a matrix `G` where `G[i,j]` is the number of copies of the alt allele found in sample `i`, common SNP `j`. The samples are observations, and the SNPs are variables. Reference: doi:10.1371/journal.pgen.0020190
 
 The PCA's interpretation becomes clear if we label the points by the ethnicity of each individual. This also provides an elementary example of joining "phenotypic data":
 
 ```{r, warning=FALSE}
+H = download
 pd <- data.frame(PC1=H[,1], PC2=H[,2], PC3=H[,3],
-                 population=scidb("KG_SAMPLE_POPL_CODE")$Population[][,2])
+                 population=scidb("KG_POPULATION")$population[][,3])
 
 popnames <- list(
   ACB='Caribbean', ASW='African-Amer', BEB='South Asian', CEU='European',
@@ -291,100 +254,4 @@ In addition to generating cool visualizations, PCA plays a crucial role in stati
 
 Linkage disequilibrum (LD) describes the correlation among the alleles observed at nearby sites. It reflects the inheritance of haplotypes on short timescales compared to the rate of genetic recombination. Let's look at LD among common SNPs in a region of several hundred kilobases.
 
-```{r}
-LDchrom <- "21"
-LDlo <- 35409243
-LDhi <- 36065894
-LD_SNP <- (subset(SNP, sprintf("chrom = '%s' and pos >= %i and pos < %i", LDchrom, LDlo, LDhi))
-      %>>% merge(scidb("KG_VARIANT_MULT_VAL"))
-      %>>% subset(sprintf("af>= %f and af <=%f ", 0.1, 0.9))
-      %>>% redimension(sprintf("<signature:string> [variant_id=0:%i,10000,0]", nrow(.)-1))
-      %>>% scidbeval)
-count(LD_SNP)
-```
-
-Formulate L where L[i,j] is the alt allele count in sample i at site j.
-
-```{r}
-Ldensifier <- (dimension_rename(unpack(LD_SNP),"i","dense_variant_id")
-          %>>% redimension(sprintf("<dense_variant_id:int64> %s",
-                                   scidb:::build_dim_schema(VARIANT))))
-
-L <- (bind(GENOTYPE, "alt_count", "double(allele1+allele2)")
- %>>% merge(Ldensifier)
- %>>% redimension(sprintf("<alt_count:double NULL> [sample_id = 0:%i,100,0, dense_variant_id=0:%i,100,0]",
-                          count(SAMPLE)-1, count(LD_SNP)-1))
- %>>% scidbeval(temp=TRUE))
-```
-
-Compute the sample correlation matrix for the sites, providing estimates of the linkage disequilibrium (r) for each pair of SNPs. Reference: doi:10.1534/genetics.108.093153
-
-```{r, fig.width=6.5, fig.height=6.5}
-# reference: https://github.com/Paradigm4/SciDBR/wiki/Correlation-matrix-example
-L0 <- sweep(L, 2, apply(L, 2, mean))
-Lcov <- crossprod(L0)/(nrow(L0) - 1)
-Ls  <- diag(Lcov)^(-1/2)
-Lr <- Ls * Lcov * Ls
-Lr2 <- scidbeval(project(bind(Lr, "r2", "pow(v,2)"), "r2"))
-invisible(image(Lr2,main=sprintf("LD among common SNPs in %s:%d-%d",
-                                 LDchrom, LDlo, LDhi)))
-```
-
-We see several distinct haplotype blocks in this region. Unusually long haplotype blocks - which these are not necessarily - can indicate interesting population history, such as selective sweeps, bottlenecks, or founder effects.
-
-## Hardy-Weinberg equilibrium
-
-Hardy-Weinberg equilibrium (HWE) describes the diploid genotype frequencies expected as a function of the allele frequencies at a site, under various idealistic assumptions. Let's count the genotypes observed across the population at each SNP:
-
-```{r}
-HW_TABLE <- (merge(GENOTYPE, SNP, "variant_id")
-        %>>% bind(c("AA","aa","Aa"),
-                  c("iif(allele1=0 and allele2=0,1,0)", "iif(allele1=1 and allele2=1,1,0)",
-                    "iif((allele1=1 and allele2=0) or (allele1=0 and allele2=1),1,0)"))
-        %>>% aggregate(FUN="sum(AA) as AA, sum(aa) as aa, sum(Aa) as Aa",by="variant_id")
-        %>>% scidbeval(temp=TRUE))
-HW_TABLE[0:9,][]
-```
-
-Add the allele frequencies:
-
-```{r}
-HW_BY_SNP <- (bind(HW_TABLE, "N", "AA + Aa + aa")
-         %>>% bind("p", "double(2*AA + Aa)/(2*N)")
-         %>>% bind("q", "double(2*aa + Aa)/(2*N)")
-         %>>% scidbeval)
-head(HW_BY_SNP)
-```
-
-Compute the expected genotype counts under HWE, and the chi^2 statistics for deviation from equilibrium.
-
-```{r}
-HW_BY_SNP <- (HW_BY_SNP
-         %>>% bind("E_AA", "N*p*p")
-         %>>% bind("E_Aa", "2*N*p*q")
-         %>>% bind("E_aa", "N*q*q")
-         %>>% bind("chi_2", "pow(AA-E_AA,2)/E_AA +
-                             pow(Aa-E_Aa,2)/E_Aa +
-                             pow(aa-E_aa,2)/E_aa")
-         %>>% scidbeval)
-round(head(HW_BY_SNP),4)
-
-# plot a sample of Aa vs. E_Aa
-HW_BY_SNP_SAMPLE <- unpack(bernoulli(HW_BY_SNP, 0.005))
-HW_BY_SNP_SAMPLE <- HW_BY_SNP_SAMPLE[1:count(HW_BY_SNP_SAMPLE)-1,] # trims dimension
-qplot(as(HW_BY_SNP_SAMPLE$E_Aa[],"vector"), as(HW_BY_SNP_SAMPLE$Aa[],"vector"),
-      xlab="E_Aa", ylab="Aa")
-
-# proportion of sites with chi_2 > 3.841; random expectation would be 0.05.
-count(HW_BY_SNP$chi_2 %>% 3.841)/count(HW_BY_SNP$chi_2)
-```
-
-Have a look at the most out-of-equilibrium common SNPs:
-
-```{r}
-HWE_OUTLIERS <- sort(merge(project(SNP_COMMON,"signature"), HW_BY_SNP),
-                     decreasing=TRUE, attributes="chi_2")
-head(HWE_OUTLIERS[,c("signature","AA","Aa","aa","chi_2")])
-```
-
-Close examination of these sites would probably reveal regions prone to ambiguous NGS read mapping, or some other technical artifacts. Occasionally, after careful follow-up analysis, we might find sites out of equilibrium for interesting reasons, such as recent selective sweeps or heterozygote advantage.
+<To be added>
