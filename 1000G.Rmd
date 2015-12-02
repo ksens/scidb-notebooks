@@ -179,10 +179,11 @@ print(sprintf("%f %f: Centered", (proc.time()-t0)[3], (proc.time()-t1)[3]))
 t1=proc.time()
 
 #Covariance if you like
-#Y = t(X)  # samples in columns
-#Y = Y - apply(Y,2,mean)
-#CV = crossprod(Y)/(nrow(Y) - 1)
-#image(CV)
+X = centered
+Y = t(X)  # samples in columns
+Y = Y - apply(Y,2,mean)
+CV = crossprod(Y)/(nrow(Y) - 1)
+image(CV)
 
 svded =  scidb(sprintf("gesvd(%s, 'left')", centered@name))
 svded = scidbeval(svded, temp=TRUE)
