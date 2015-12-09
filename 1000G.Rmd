@@ -38,7 +38,7 @@ require(scidb)
 scidbconnect()
 SAMPLE <- scidb("KG_SAMPLE")
 CHROMOSOME <- scidb("KG_CHROMOSOME")
-VARIANT <- merge(scidb("KG_VARIANT"), subset(CHROMOSOME, "chromosome='10' or chromosome='21' or chromosome='22'"))
+VARIANT <- merge(scidb("KG_VARIANT"), subset(CHROMOSOME, "chromosome='21' or chromosome='22'"))
 VARIANT <- scidbeval(VARIANT)
 GENOTYPE <- project(merge(scidb("KG_GENOTYPE"),project(VARIANT,'chromosome')),
                     c("allele_1","allele_2","phase"))
@@ -53,7 +53,7 @@ head(VARIANT)
 str(VARIANT)
 count(VARIANT)
 
-GENOTYPE[9,60494,60494,1,0:4][]
+GENOTYPE[20,9411239,9411239,1,0:5][]
 str(GENOTYPE)
 count(GENOTYPE)
 ```
